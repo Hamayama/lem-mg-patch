@@ -35,14 +35,15 @@
    プログラムメニューから MSYS2 の MinGW 64bit Shell を起動して、以下のコマンドを実行してください。
    ```
    pacman -S mingw64/mingw-w64-x86_64-pdcurses
-   cp /mingw64/include/pdcurses.h /mingw64/include/ncurses.h
+   cp -i /mingw64/include/pdcurses.h /mingw64/include/ncurses.h
    ```
    ＜MSYS2/MinGW-w64 (32bit) 環境の場合＞  
    プログラムメニューから MSYS2 の MinGW 32bit Shell を起動して、以下のコマンドを実行してください。
    ```
    pacman -S mingw32/mingw-w64-i686-pdcurses
-   cp /mingw32/include/pdcurses.h /mingw32/include/ncurses.h
+   cp -i /mingw32/include/pdcurses.h /mingw32/include/ncurses.h
    ```
+   (すでにインストール済みであれば本手順は不要です)
 
 3. Roswell のダウンロード  
    https://github.com/roswell/roswell/wiki/Installation#windows  
@@ -50,7 +51,8 @@
    64bit 環境の場合は Roswell-x86_64.zip を、  
    32bit 環境の場合は Roswell-i686.zip を、  
    ダウンロードして、適当なフォルダに展開してください。  
-   そして、Windows の環境変数 PATH に、展開したフォルダへのパスを追加してください。
+   そして、Windows の環境変数 PATH に、展開したフォルダへのパスを追加してください。  
+   (すでにインストール済みであれば本手順は不要です)
 
 4. Roswell のセットアップ  
    ＜MSYS2/MinGW-w64 (64bit) 環境の場合＞  
@@ -60,6 +62,7 @@
    ```
    ros setup
    ```
+   (すでにインストール済みであれば本手順は不要です)
 
 5. Lem エディタのインストール  
    ＜MSYS2/MinGW-w64 (64bit) 環境の場合＞  
@@ -71,7 +74,7 @@
    ```
 
 6. パッチデータのダウンロードとコピー  
-   本サイト ( https://github.com/Hamayama/lem_mg_patch ) のデータ一式を、  
+   本サイト ( https://github.com/Hamayama/lem-mg-patch ) のデータ一式を、  
    (Download Zip ボタン等で) ダウンロードして、適当なフォルダに展開してください。  
    そして、展開したフォルダ内の 1000_copy_patch.bat を実行して、  
    パッチデータをコピーしてください。
@@ -98,10 +101,10 @@
   winpty ros -Q -m lem-ncurses -L sbcl-bin -- $USERPROFILE/.roswell/lisp/quicklisp/bin/lem-ncurses
   ```
   Lem エディタの画面が表示されます。  
-  以後はおおむね Emacs のように操作できます。
+  おおむね Emacs のように操作できます。
 
 
-## 問題点等
+## 問題点
 1. コマンドプロンプト上では動作しない
 2. mintty 上でも winpty をかませないと動作しない (リダイレクトエラー)
 3. 日本語を入力してからカーソルを移動すると表示が変になる  
@@ -109,13 +112,13 @@
 4. メタキーが見つからない  
    → ESCキーを押した瞬間に x を押せば M-x になるもよう。。。  
    → Altキーがメタキーになるように対策
-5. mintty の画面サイズを変えても追従しない
-6. C-x C-c ですぐに終了しない。その後、何かキーを押すと終了する
-7. いろいろ操作していたら、ミニバッファの表示がメイン画面にも出たことがあった
-8. 絵文字(#\U1F363 の「すし」等)を表示すると、カーソルがずれる
-9. 絵文字(#\U1F363 の「すし」等)を保存すると、MUTF-8 (Modified UTF-8) で保存される
-10. C-space で mark-set にならず @ が表示される  
-    → C-space で mark-set になるように対策
+5. C-space で mark-set にならず @ が表示される  
+   → C-space で mark-set になるように対策
+6. mintty の画面サイズを変えても追従しない
+7. C-x C-c ですぐに終了しない。その後、何かキーを押すと終了する
+8. いろいろ操作していたら、ミニバッファの表示がメイン画面にも出たことがあった
+9. 絵文字(#\U1F363 の「すし」等)を表示すると、カーソルがずれる
+10. 絵文字(#\U1F363 の「すし」等)を保存すると、MUTF-8 (Modified UTF-8) で保存される
 
 
 ## その他 情報等
@@ -123,13 +126,14 @@
    「Uncaught Error: A dynamic link library (DLL) initialization routine failed.」
 2. MSYS2 の MSYS用 の ncurses も試してみたが、以下のエラーで動作せず  
    「Unhandled CFFI:LOAD-FOREIGN-LIBRARY-ERROR」
-3. バージョンアップについて  
+3. バージョンアップについて、  
    `ros update lem`   
    では更新できない(git用?)。  
    `ros install cxxxr/lem`  
    で rename-file に失敗するので、元のフォルダを削除またはリネームしてから、再度  
    `ros install cxxxr/lem`  
-   を実行する。
+   を実行する。  
+   そして再度パッチを適用
 
 
 ## 環境等
