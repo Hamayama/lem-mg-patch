@@ -15,6 +15,9 @@
       (apply #'format out fmt args)
       (terpri out)))
 
+  ;; for resize display
+  (defkeycode "[resize]" #x222)
+
   ;; add window slot
   (defstruct ncurses-view
     window
@@ -130,7 +133,11 @@
         (return-from get-event
           (let ((code (get-ch)))
             (cond ((= code -1) (go :start))
-                  ((= code resize-code) :resize)
+                  ((= code resize-code)
+                   ;; for resize display
+                   (charms/ll:resizeterm 0 0)
+                   (charms/ll:erase)
+                   :resize)
                   ((= code abort-code) :abort)
                   ((= code escape-code)
                    (charms/ll:timeout 100)
@@ -157,6 +164,26 @@
                                :ctrl (key-ctrl key))))
                   (t
                    (get-key code))))))))
+
+  ;; for resize display (avoid SEGV)
+  (defmethod lem-if:redraw-view-after ((implementation ncurses) view focus-window-p)
+    (let ((attr (attribute-to-bits 'modeline)))
+      (charms/ll:attron attr)
+      (when (and (ncurses-view-modeline-scrwin view)
+                 (< 0 (ncurses-view-x view)))
+        (charms/ll:move (ncurses-view-y view) (1- (ncurses-view-x view)))
+        (charms/ll:vline (char-code #\space) (1+ (ncurses-view-height view))))
+      (charms/ll:attroff attr)
+      (charms/ll:wnoutrefresh charms/ll:*stdscr*))
+    ;(dbg-log-format "lem-if:redraw-view-after 1")
+    (when (and (ncurses-view-modeline-scrwin view)
+               (>= charms/ll:*cols*  5)
+               (>= charms/ll:*lines* 3))
+      (charms/ll:wnoutrefresh (ncurses-view-modeline-scrwin view)))
+    ;(dbg-log-format "lem-if:redraw-view-after 2")
+    ;(charms/ll:wnoutrefresh (ncurses-view-scrwin view))
+    ;(dbg-log-format "lem-if:redraw-view-after 3")
+    )
 
   )
 

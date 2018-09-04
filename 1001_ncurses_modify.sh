@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 1001_ncurses_modify.sh
-# 2018-9-4 v1.00
+# 2018-9-5 v1.01
 
 set -e
 
@@ -54,7 +54,7 @@ function do_patch_to_lisp_file {
     # comment out '(defstruct ncurses-view ... )'
     if grep -q -e '^(defstruct ncurses-view' $patch_file; then
         cp $patch_file $patch_file.$bak
-        sed -e '/(defstruct ncurses-view/,/)/ s@^\(.*\)$@;\1@g' $patch_file.$bak > $patch_file
+        sed -e '/(defstruct ncurses-view/,/height)/ s@^\(.*\)$@;\1@g' $patch_file.$bak > $patch_file
     fi
 
     rm -f $patch_file.$bak
