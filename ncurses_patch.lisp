@@ -17,6 +17,7 @@
 
   ;; for resize display
   (defkeycode "[resize]" #x222)
+  (defvar *resizing* nil)
 
   ;; add window slot
   (defstruct ncurses-view
@@ -102,20 +103,26 @@
             (modifier-keys (charms/ll:PDC-get-key-modifiers)))
         (setf ctrl-key (logtest modifier-keys charms/ll:PDC_KEY_MODIFIER_CONTROL))
         (setf alt-key  (logtest modifier-keys charms/ll:PDC_KEY_MODIFIER_ALT))
-        ;(dbg-log-format "code=~D ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
-        ;; ctrl key workaround
-        (when ctrl-key
+        ;(dbg-log-format "1 code=~D ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
+        (cond
+         ;; ctrl key workaround
+         (ctrl-key
           (cond
            ;; C-space / C-@
-           ((= code 64) (setf code 0))
+           ((= code #x040) (setf code 0))
            ;; C-down / C-up / C-left / C-right
            ((= code #x1e1) (setf code 525))
            ((= code #x1e0) (setf code 566))
            ((= code #x1bb) (setf code 545))
            ((= code #x1bc) (setf code 560))
+           ;; C-Home / C-End / C-PageUp / C-PageDown
+           ((= code #x1bf) (setf alt-key t) (setf code #x03c)) ; M-<
+           ((= code #x1c0) (setf alt-key t) (setf code #x03e)) ; M->
+           ((= code #x1bd) (setf code #o523)) ; PageUp
+           ((= code #x1be) (setf code #o522)) ; PageDown
            ))
-        ;; alt key workaround
-        (when alt-key
+         ;; alt key workaround
+         (alt-key
           (cond
            ;; M-0 - M-9
            ;((<= #x197 code #x1a0) (setf code (- code #x167)))
@@ -127,16 +134,28 @@
            ((= code #x1ed) (setf code #o404))
            ((= code #x1ec) (setf code #o405))
            ))
+         ;; normal key workaround
+         (t
+          (cond
+           ;; Home / End / PageUp / PageDown
+           ;((= code #x106) (setf code #o406))
+           ((= code #x166) (setf code #o550))
+           ;((= code #x153) (setf code #o523))
+           ;((= code #x152) (setf code #o522))
+           )))
+        ;(dbg-log-format "2 code=~D ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
         code))
     (defun get-event ()
       (tagbody :start
         (return-from get-event
           (let ((code (get-ch)))
+            (setf *resizing* nil)
             (cond ((= code -1) (go :start))
                   ((= code resize-code)
                    ;; for resize display
                    (charms/ll:resizeterm 0 0)
                    (charms/ll:erase)
+                   (setf *resizing* t)
                    :resize)
                   ((= code abort-code) :abort)
                   ((= code escape-code)
@@ -167,6 +186,7 @@
 
   ;; for resize display (avoid SEGV)
   (defmethod lem-if:redraw-view-after ((implementation ncurses) view focus-window-p)
+    ;(dbg-log-format "lem-if:redraw-view-after 1")
     (let ((attr (attribute-to-bits 'modeline)))
       (charms/ll:attron attr)
       (when (and (ncurses-view-modeline-scrwin view)
@@ -175,14 +195,26 @@
         (charms/ll:vline (char-code #\space) (1+ (ncurses-view-height view))))
       (charms/ll:attroff attr)
       (charms/ll:wnoutrefresh charms/ll:*stdscr*))
-    ;(dbg-log-format "lem-if:redraw-view-after 1")
-    (when (and (ncurses-view-modeline-scrwin view)
-               (>= charms/ll:*cols*  5)
-               (>= charms/ll:*lines* 3))
-      (charms/ll:wnoutrefresh (ncurses-view-modeline-scrwin view)))
     ;(dbg-log-format "lem-if:redraw-view-after 2")
-    ;(charms/ll:wnoutrefresh (ncurses-view-scrwin view))
+    (when (and (ncurses-view-modeline-scrwin view)
+               (>= charms/ll:*lines* 2))
+      ;; remake modeline scrwin (avoid SEGV)
+      ;(when *resizing*
+      ;  (charms/ll:delwin (ncurses-view-modeline-scrwin view))
+      ;  (setf (ncurses-view-modeline-scrwin view)
+      ;        (charms/ll:newwin 1 charms/ll:*cols* (max (- charms/ll:*lines* 2) 0) 0)))
+      (charms/ll:wnoutrefresh (ncurses-view-modeline-scrwin view)))
     ;(dbg-log-format "lem-if:redraw-view-after 3")
+    ;(dbg-log-format "width=~D height=~D *resizing*=~S"
+    ;                (ncurses-view-width view) (ncurses-view-height view) *resizing*)
+    ;; remake minibuffer scrwin (avoid SEGV)
+    (when (and *resizing*
+               (minibuffer-window-p (ncurses-view-window view)))
+      (charms/ll:delwin (ncurses-view-scrwin view))
+      (setf (ncurses-view-scrwin view)
+            (charms/ll:newwin 1 charms/ll:*cols* (max (- charms/ll:*lines* 1) 0) 0)))
+    (charms/ll:wnoutrefresh (ncurses-view-scrwin view))
+    ;(dbg-log-format "lem-if:redraw-view-after 4")
     )
 
   )
