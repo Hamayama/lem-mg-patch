@@ -1,11 +1,13 @@
 #!/bin/bash
 
 # 1001_lem_modify.sh
-# 2018-9-7 v1.04
+# 2018-9-7 v1.05
 
 set -e
 
 ##### settings #####
+LEMBASE_ASD_FILE=lem-base/lem-base.asd
+LEMBASE_ASD_BKUP=lem-base/lem-base_orig1001.asd
 LISPMODE_ASD_FILE=modes/lisp-mode/lem-lisp-mode.asd
 LISPMODE_ASD_BKUP=modes/lisp-mode/lem-lisp-mode_orig1001.asd
 NCURSES_ASD_FILE=lem-frontend-ncurses/lem-ncurses.asd
@@ -28,6 +30,19 @@ function do_backup_file {
     if [ ! -f "$2" ]; then
         cp "$1" "$2"
     fi
+}
+
+function do_patch_to_lembase_asd_file {
+    local patch_file="$1"
+    local bak="bak5001"
+
+    # add '(:file "buffer_patch")'
+    if ! grep -q -e '(:file "buffer_patch")' $patch_file; then
+        cp $patch_file $patch_file.$bak
+        sed -e 's@\((:file "buffer")\)@\1(:file "buffer_patch")@' $patch_file.$bak > $patch_file
+    fi
+
+    rm -f $patch_file.$bak
 }
 
 function do_patch_to_lispmode_asd_file {
@@ -83,12 +98,15 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+do_check_file  $LEMBASE_ASD_FILE
 do_check_file  $LISPMODE_ASD_FILE
 do_check_file  $NCURSES_ASD_FILE
 do_check_file  $NCURSES_LISP_FILE
+do_backup_file $LEMBASE_ASD_FILE  $LEMBASE_ASD_BKUP
 do_backup_file $LISPMODE_ASD_FILE $LISPMODE_ASD_BKUP
 do_backup_file $NCURSES_ASD_FILE  $NCURSES_ASD_BKUP
 do_backup_file $NCURSES_LISP_FILE $NCURSES_LISP_BKUP
+do_patch_to_lembase_asd_file  $LEMBASE_ASD_FILE
 do_patch_to_lispmode_asd_file $LISPMODE_ASD_FILE
 do_patch_to_ncurses_asd_file  $NCURSES_ASD_FILE
 do_patch_to_ncurses_lisp_file $NCURSES_LISP_FILE
