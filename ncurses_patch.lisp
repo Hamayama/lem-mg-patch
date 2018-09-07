@@ -15,7 +15,7 @@
       (apply #'format out fmt args)
       (terpri out)))
 
-  ;; for resize display
+  ;; for resizing display
   (defkeycode "[resize]" #x222)
   (defvar *resizing* nil)
 
@@ -49,24 +49,38 @@
        :width width
        :height height)))
 
-  ;; pos-x is used for printing characters
+  ;; for dealing with surrogate pairs
+  (defun get-charcode-from-scrwin (view y x)
+    (let ((c-lead (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y x)
+                          charms/ll:A_CHARTEXT)))
+      (cond
+       ((and (<= #xd800 c-lead #xdbff) (< x (- charms/ll:*cols* 1)))
+        (let ((c-trail (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y (+ x 1))
+                               charms/ll:A_CHARTEXT)))
+          (+ #x10000 (* (- c-lead #xd800) #x0400) (- c-trail #xdc00))))
+       (t
+        c-lead))))
+
+  ;; get-pos-x is used for printing wide characters
   (defun get-pos-x (view x y)
-    (let* ((screen (lem::window-screen (ncurses-view-window view)))
-           (str    (or (car (aref (lem::screen-lines screen) y)) ""))
-           (pos-x  0))
-      ;(dbg-log-format "x=~D y=~D str=~S" x y str)
-      (loop :with w := 0 :while (< w x)
-            :for c :across str
-            :do (setf w (lem-base:char-width c w))
-                (cond
-                 ((gethash c lem-base:*char-replacement*)
-                  (setf pos-x (lem-base:char-width c pos-x)))
-                 (t
-                  (incf pos-x))))
-      pos-x))
+    (loop :with disp-x := 0 :while (< disp-x x)
+          :with pos-x  := 0
+          :for c-code := (get-charcode-from-scrwin view y pos-x)
+          :for c := (code-char c-code)
+          :do ;(dbg-log-format "x=~D y=~D disp-x=~D pos-x=~D c-code=~X c=~S"
+              ;                x y disp-x pos-x c-code c)
+              (setf disp-x (lem-base:char-width c disp-x))
+              (cond
+               ((gethash c lem-base:*char-replacement*)
+                (setf pos-x (lem-base:char-width c pos-x)))
+               (t
+                (incf pos-x)))
+          :finally ;(dbg-log-format "x=~D y=~D pos-x=~D" x y pos-x)
+                   (return pos-x)))
 
   ;; use get-pos-x
   (defmethod lem-if:print ((implementation ncurses) view x y string attribute)
+    ;(dbg-log-format "x=~D y=~D pos-x=~D string=~S" x y (get-pos-x view x y) string)
     (let ((attr (attribute-to-bits attribute)))
       (charms/ll:wattron (ncurses-view-scrwin view) attr)
       ;(charms/ll:scrollok (ncurses-view-scrwin view) 0)
@@ -83,11 +97,15 @@
 
   ;; use get-pos-x
   (defmethod lem-if:clear-eol ((implementation ncurses) view x y)
-    (charms/ll:wmove (ncurses-view-scrwin view) y (get-pos-x view x y))
-    (charms/ll:wclrtoeol (ncurses-view-scrwin view)))
+    ;(dbg-log-format "lem-if:clear-eol")
+    ;; workaround for a line continuetion character missing
+    (when (< x charms/ll:*cols*)
+      (charms/ll:wmove (ncurses-view-scrwin view) y (get-pos-x view x y))
+      (charms/ll:wclrtoeol (ncurses-view-scrwin view))))
 
   ;; use get-pos-x
   (defmethod lem-if:clear-eob ((implementation ncurses) view x y)
+    ;(dbg-log-format "lem-if:clear-eob")
     (charms/ll:wmove (ncurses-view-scrwin view) y (get-pos-x view x y))
     (charms/ll:wclrtobot (ncurses-view-scrwin view)))
 
@@ -96,7 +114,8 @@
         (abort-code (get-code "C-]"))
         (escape-code (get-code "escape"))
         (ctrl-key nil)
-        (alt-key  nil))
+        (alt-key  nil)
+        (esc-key  nil))
     (defun get-ch ()
       (charms/ll:PDC-save-key-modifiers 1)
       (let ((code          (charms/ll:getch))
@@ -152,17 +171,22 @@
             (setf *resizing* nil)
             (cond ((= code -1) (go :start))
                   ((= code resize-code)
-                   ;; for resize display
+                   (setf esc-key nil)
+                   ;; for resizing display
                    (charms/ll:resizeterm 0 0)
                    (charms/ll:erase)
                    (setf *resizing* t)
                    :resize)
-                  ((= code abort-code) :abort)
+                  ((= code abort-code)
+                   (setf esc-key nil)
+                   :abort)
                   ((= code escape-code)
+                   (setf esc-key nil)
                    (charms/ll:timeout 100)
                    (let ((code (prog1 (get-ch)
                                  (charms/ll:timeout -1))))
                      (cond ((= code -1)
+                            (setf esc-key t)
                             (get-key-from-name "escape"))
                            ((= code #.(char-code #\[))
                             (if (= (prog1 (get-ch)
@@ -176,15 +200,17 @@
                               (make-key :meta t
                                         :sym (key-sym key)
                                         :ctrl (key-ctrl key)))))))
-                  (alt-key
+                  ((or alt-key esc-key)
+                   (setf esc-key nil)
                    (let ((key (get-key code)))
                      (make-key :meta t
                                :sym (key-sym key)
                                :ctrl (key-ctrl key))))
                   (t
+                   (setf esc-key nil)
                    (get-key code))))))))
 
-  ;; for resize display (avoid SEGV)
+  ;; for resizing display (avoid SEGV)
   (defmethod lem-if:redraw-view-after ((implementation ncurses) view focus-window-p)
     ;(dbg-log-format "lem-if:redraw-view-after 1")
     (let ((attr (attribute-to-bits 'modeline)))
@@ -198,7 +224,7 @@
     ;(dbg-log-format "lem-if:redraw-view-after 2")
     (when (and (ncurses-view-modeline-scrwin view)
                (>= charms/ll:*lines* 2))
-      ;; remake modeline scrwin (avoid SEGV)
+      ;; remake modeline's scrwin (avoid SEGV)
       ;(when *resizing*
       ;  (charms/ll:delwin (ncurses-view-modeline-scrwin view))
       ;  (setf (ncurses-view-modeline-scrwin view)
@@ -207,7 +233,7 @@
     ;(dbg-log-format "lem-if:redraw-view-after 3")
     ;(dbg-log-format "width=~D height=~D *resizing*=~S"
     ;                (ncurses-view-width view) (ncurses-view-height view) *resizing*)
-    ;; remake minibuffer scrwin (avoid SEGV)
+    ;; remake minibuffer's scrwin (avoid SEGV)
     (when (and *resizing*
                (minibuffer-window-p (ncurses-view-window view)))
       (charms/ll:delwin (ncurses-view-scrwin view))

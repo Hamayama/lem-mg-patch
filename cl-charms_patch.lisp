@@ -23,5 +23,8 @@
   (define-exported-cfuns ("PDC_save_key_modifiers") :int (flag bool))
   (define-exported-cfuns ("PDC_return_key_modifiers") :int (flag bool))
 
+  ;; for extracting a character code
+  (define-exported-constant A_CHARTEXT #x0000ffff)
+
   )
 
