@@ -117,6 +117,7 @@
         (alt-key  nil)
         (esc-key  nil))
     (defun get-ch ()
+      ;(dbg-log-format "get-ch")
       (charms/ll:PDC-save-key-modifiers 1)
       (let ((code          (charms/ll:getch))
             (modifier-keys (charms/ll:PDC-get-key-modifiers)))
@@ -209,6 +210,25 @@
                   (t
                    (setf esc-key nil)
                    (get-key code))))))))
+
+  ;; workaround for exit problem
+  (defun input-loop (editor-thread)
+    (handler-case
+        (loop
+          (handler-case
+              (progn
+                (unless (bt:thread-alive-p editor-thread) (return))
+                ;; workaround for exit problem
+                (sleep 0.001)
+                (let ((event (get-event)))
+                  (if (eq event :abort)
+                      (send-abort-event editor-thread nil)
+                      (send-event event))))
+            #+sbcl
+            (sb-sys:interactive-interrupt (c)
+              (declare (ignore c))
+              (send-abort-event editor-thread t))))
+      (exit-editor (c) (return-from input-loop c))))
 
   ;; for resizing display (avoid SEGV)
   (defmethod lem-if:redraw-view-after ((implementation ncurses) view focus-window-p)
