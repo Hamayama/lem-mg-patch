@@ -162,41 +162,42 @@
           (handler-case
               (progn
                 (unless (bt:thread-alive-p editor-thread) (return))
-                ;; workaround for exit problem
-                ;; workaround for display update problem (incomplete)
-                (sleep 0.005)
                 (let ((event (get-event)))
                   (if (eq event :abort)
                       (send-abort-event editor-thread nil)
-                      (send-event event))))
+                      (send-event event)))
+                ;; workaround for exit problem
+                ;; workaround for display update problem (incomplete)
+                (sleep 0.005))
             #+sbcl
             (sb-sys:interactive-interrupt (c)
               (declare (ignore c))
               (send-abort-event editor-thread t))))
       (exit-editor (c) (return-from input-loop c))))
 
-;; workaround for exit problem
-(defmethod lem-if:invoke ((implementation ncurses) function)
-  (let ((result nil)
-        (input-thread (bt:current-thread)))
-    (unwind-protect
-        (progn
-          (when (lem.term:term-init)
-            (let ((editor-thread
-                    (funcall function
-                             nil
-                             (lambda (report)
-                               (bt:interrupt-thread
-                                input-thread
-                                (lambda () (error 'exit-editor :value report)))))))
-              (setf result (input-loop editor-thread))
-              ;; workaround for exit problem
-              ;; (to avoid 'compilation unit aborted caught 1 fatal ERROR condition')
-              (bt:join-thread editor-thread))))
-      (lem.term:term-finalize))
-    (when (and (typep result 'exit-editor)
-               (exit-editor-value result))
-      (format t "~&~A~%" (exit-editor-value result)))))
+  ;; workaround for exit problem
+  (defmethod lem-if:invoke ((implementation ncurses) function)
+    (let ((result nil)
+          (input-thread (bt:current-thread)))
+      (unwind-protect
+          (progn
+            (when (lem.term:term-init)
+              (let ((editor-thread
+                      (funcall function
+                               nil
+                               (lambda (report)
+                                 (bt:interrupt-thread
+                                  input-thread
+                                  (lambda () (error 'exit-editor :value report)))))))
+                (setf result (input-loop editor-thread))
+                ;; workaround for exit problem
+                ;; (to avoid 'compilation unit aborted caught 1 fatal ERROR condition')
+                (bt:join-thread editor-thread)
+                )))
+        (lem.term:term-finalize))
+      (when (and (typep result 'exit-editor)
+                 (exit-editor-value result))
+        (format t "~&~A~%" (exit-editor-value result)))))
 
   ;; for resizing display
   (defun resize-display ()
@@ -429,8 +430,8 @@
           (progn
             (charms/ll:curs-set 1)
             (charms/ll:wmove scrwin
-             (+ lem::*cursor-y* (ncurses-view-y view))
-             (+ lem::*cursor-x* (ncurses-view-x view)))))
+                             (+ lem::*cursor-y* (ncurses-view-y view))
+                             (+ lem::*cursor-x* (ncurses-view-x view)))))
       (charms/ll:wnoutrefresh scrwin)
       (charms/ll:doupdate)))
 
