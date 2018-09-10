@@ -19,9 +19,8 @@
   (defkeycode "[resize]" #x222)
   (defvar *resizing* nil)
 
-  ;; add 'window' slot
+  ;; no change
   (defstruct ncurses-view
-    window
     scrwin
     modeline-scrwin
     x
@@ -29,25 +28,31 @@
     width
     height)
 
-  ;; add 'window' slot
+  ;; use only stdscr
   (defmethod lem-if:make-view
       ((implementation ncurses) window x y width height use-modeline)
-    (flet ((newwin (nlines ncols begin-y begin-x main-screen)
-             (declare (ignore main-screen))
-             (let ((win (charms/ll:newwin nlines ncols begin-y begin-x)))
-               (when use-modeline (charms/ll:keypad win 1))
-               ;; (when main-screen
-               ;;   (charms/ll:idlok win 1)
-               ;;   (charms/ll:scrollok win 1))
-               win)))
-      (make-ncurses-view
-       :window window
-       :scrwin (newwin height width y x nil)
-       :modeline-scrwin (when use-modeline (newwin 1 width (+ y height) x nil))
-       :x x
-       :y y
-       :width width
-       :height height)))
+    ;(flet ((newwin (nlines ncols begin-y begin-x main-screen)
+    ;         (declare (ignore main-screen))
+    ;         (let ((win (charms/ll:newwin nlines ncols begin-y begin-x)))
+    ;           (when use-modeline (charms/ll:keypad win 1))
+    ;           ;; (when main-screen
+    ;           ;;   (charms/ll:idlok win 1)
+    ;           ;;   (charms/ll:scrollok win 1))
+    ;           win)))
+    ;  (make-ncurses-view
+    ;   :scrwin (newwin height width y x nil)
+    ;   :modeline-scrwin (when use-modeline (newwin 1 width (+ y height) x nil))
+    ;   :x x
+    ;   :y y
+    ;   :width width
+    ;   :height height)))
+    (make-ncurses-view
+     :scrwin charms/ll:*stdscr*
+     :modeline-scrwin (if use-modeline charms/ll:*stdscr* nil)
+     :x x
+     :y y
+     :width width
+     :height height))
 
   ;; enable modifier keys
   (let ((resize-code (get-code "[resize]"))
@@ -59,8 +64,6 @@
     (defun get-ch ()
       ;(dbg-log-format "get-ch")
       (charms/ll:PDC-save-key-modifiers 1)
-      ;; workaround for display update problem (incomplete)
-      ;(charms/ll:timeout 100)
       (let ((code          (charms/ll:getch))
             (modifier-keys (charms/ll:PDC-get-key-modifiers)))
         (setf ctrl-key (logtest modifier-keys charms/ll:PDC_KEY_MODIFIER_CONTROL))
@@ -160,6 +163,7 @@
               (progn
                 (unless (bt:thread-alive-p editor-thread) (return))
                 ;; workaround for exit problem
+                ;; workaround for display update problem (incomplete)
                 (sleep 0.005)
                 (let ((event (get-event)))
                   (if (eq event :abort)
@@ -171,17 +175,42 @@
               (send-abort-event editor-thread t))))
       (exit-editor (c) (return-from input-loop c))))
 
+;; workaround for exit problem
+(defmethod lem-if:invoke ((implementation ncurses) function)
+  (let ((result nil)
+        (input-thread (bt:current-thread)))
+    (unwind-protect
+        (progn
+          (when (lem.term:term-init)
+            (let ((editor-thread
+                    (funcall function
+                             nil
+                             (lambda (report)
+                               (bt:interrupt-thread
+                                input-thread
+                                (lambda () (error 'exit-editor :value report)))))))
+              (setf result (input-loop editor-thread))
+              ;; workaround for exit problem
+              ;; (to avoid 'compilation unit aborted caught 1 fatal ERROR condition')
+              (bt:join-thread editor-thread))))
+      (lem.term:term-finalize))
+    (when (and (typep result 'exit-editor)
+               (exit-editor-value result))
+      (format t "~&~A~%" (exit-editor-value result)))))
+
   ;; for resizing display
   (defun resize-display ()
     (when *resizing*
       (setf *resizing* nil)
       (charms/ll:resizeterm 0 0)
       (charms/ll:erase)
-      ;; remake minibuffer's scrwin (to avoid SEGV)
-      (let ((minibuffer-view (window-view (lem::minibuffer-window))))
-        (charms/ll:delwin (ncurses-view-scrwin minibuffer-view))
-        (setf (ncurses-view-scrwin minibuffer-view)
-              (charms/ll:newwin 1 charms/ll:*cols* (max (- charms/ll:*lines* 1) 0) 0)))))
+      ;; workaround for display update problem (incomplete)
+      (loop :for y1 :from 0 :below charms/ll:*lines*
+            :with str := (make-string charms/ll:*cols* :initial-element #\.)
+            :do ;(dbg-log-format "y1=~D" y1)
+                (charms/ll:mvwaddstr charms/ll:*stdscr* y1 0 str))
+      (charms/ll:refresh)
+      (sleep 0.1)))
 
   ;; for resizing display
   (defmethod lem-if:display-width ((implementation ncurses))
@@ -195,58 +224,75 @@
     (resize-display)
     (max 3 charms/ll:*lines*))
 
-  ;; no change
+  ;; use only stdscr
+  (defmethod lem-if:delete-view ((implementation ncurses) view)
+    ;(dbg-log-format "lem-if:delete-view")
+    ;(charms/ll:delwin (ncurses-view-scrwin view))
+    ;(when (ncurses-view-modeline-scrwin view)
+    ;  (charms/ll:delwin (ncurses-view-modeline-scrwin view))))
+    )
+
+  ;; use only stdscr
   (defmethod lem-if:clear ((implementation ncurses) view)
     ;(dbg-log-format "lem-if:clear")
-    (charms/ll:clearok (ncurses-view-scrwin view) 1)
-    (when (ncurses-view-modeline-scrwin view)
-      (charms/ll:clearok (ncurses-view-modeline-scrwin view) 1)))
+    ;(charms/ll:clearok (ncurses-view-scrwin view) 1)
+    ;(when (ncurses-view-modeline-scrwin view)
+    ;  (charms/ll:clearok (ncurses-view-modeline-scrwin view) 1)))
+    (loop :for y1 :from 0 :below (ncurses-view-height view)
+          :with str := (make-string (ncurses-view-width view) :initial-element #\space)
+          :do (charms/ll:mvwaddstr (ncurses-view-scrwin view)
+                                   (get-pos-y view 0 y1)
+                                   (get-pos-x view 0 y1)
+                                   str)))
 
-  ;; no change
+  ;; use only stdscr
   (defmethod lem-if:set-view-size ((implementation ncurses) view width height)
     ;(dbg-log-format "lem-if:set-view-size")
     (setf (ncurses-view-width view) width)
     (setf (ncurses-view-height view) height)
-    (charms/ll:wresize (ncurses-view-scrwin view) height width)
-    (when (ncurses-view-modeline-scrwin view)
-      (charms/ll:mvwin (ncurses-view-modeline-scrwin view)
-                       (+ (ncurses-view-y view) height)
-                       (ncurses-view-x view))
-      (charms/ll:wresize (ncurses-view-modeline-scrwin view)
-                         (minibuffer-window-height)
-                         width)))
+    ;(charms/ll:wresize (ncurses-view-scrwin view) height width)
+    ;(when (ncurses-view-modeline-scrwin view)
+    ;  (charms/ll:mvwin (ncurses-view-modeline-scrwin view)
+    ;                   (+ (ncurses-view-y view) height)
+    ;                   (ncurses-view-x view))
+    ;  (charms/ll:wresize (ncurses-view-modeline-scrwin view)
+    ;                     (minibuffer-window-height)
+    ;                     width)))
+    )
 
-  ;; no change
+  ;; use only stdscr
   (defmethod lem-if:set-view-pos ((implementation ncurses) view x y)
     ;(dbg-log-format "lem-if:set-view-pos")
     (setf (ncurses-view-x view) x)
     (setf (ncurses-view-y view) y)
-    (charms/ll:mvwin (ncurses-view-scrwin view) y x)
-    (when (ncurses-view-modeline-scrwin view)
-      (charms/ll:mvwin (ncurses-view-modeline-scrwin view)
-                       (+ y (ncurses-view-height view))
-                       x)))
+    ;(charms/ll:mvwin (ncurses-view-scrwin view) y x)
+    ;(when (ncurses-view-modeline-scrwin view)
+    ;  (charms/ll:mvwin (ncurses-view-modeline-scrwin view)
+    ;                   (+ y (ncurses-view-height view))
+    ;                   x)))
+    )
 
   ;; for dealing with surrogate pair characters
-  (defun get-charcode-from-scrwin (view x y &key (modeline nil))
-    (let* ((scrwin (if modeline (ncurses-view-modeline-scrwin view)
-                                (ncurses-view-scrwin view)))
-           (c-lead (logand (charms/ll:mvwinch scrwin y x)
-                           charms/ll:A_CHARTEXT)))
+  (defun get-charcode-from-scrwin (view x y)
+    (let ((c-lead (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y x)
+                          charms/ll:A_CHARTEXT)))
       (cond
        ((and (<= #xd800 c-lead #xdbff) (< x (- (ncurses-view-width view) 1)))
-        (let ((c-trail (logand (charms/ll:mvwinch scrwin y (+ x 1))
+        (let ((c-trail (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y (+ x 1))
                                charms/ll:A_CHARTEXT)))
           (+ #x10000 (* (- c-lead #xd800) #x0400) (- c-trail #xdc00))))
        (t
         c-lead))))
 
-  ;; for printing wide characters
+  ;; get pos-x/y for printing wide characters
   (defun get-pos-x (view x y &key (modeline nil))
-    (let ((disp-x 0)
-          (pos-x  0))
-      (loop :while (< disp-x x)
-            :for c-code := (get-charcode-from-scrwin view pos-x y :modeline modeline)
+    (let* ((start-x (ncurses-view-x view))
+           (disp-x0 (+ x start-x))
+           (disp-x  start-x)
+           (pos-x   start-x)
+           (pos-y   (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0))))
+      (loop :while (< disp-x disp-x0)
+            :for c-code := (get-charcode-from-scrwin view pos-x pos-y)
             :for c := (code-char c-code)
             :do ;(dbg-log-format "x=~D y=~D disp-x=~D pos-x=~D c-code=~X c=~S"
                 ;                x y disp-x pos-x c-code c)
@@ -258,18 +304,20 @@
                   (incf pos-x))))
       ;(dbg-log-format "x=~D y=~D disp-x=~D pos-x=~D" x y disp-x pos-x)
       pos-x))
+  (defun get-pos-y (view x y &key (modeline nil))
+    (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0)))
 
   ;; adjust line width by using zero-width-space character (#\u200b)
   (defun adjust-line (view x y &key (modeline nil))
-    (let ((scrwin (if modeline (ncurses-view-modeline-scrwin view)
-                               (ncurses-view-scrwin view)))
-          (disp-width  (ncurses-view-width view))
-          (disp-x      0)
-          (pos-x       0)
-          (last-disp-x 0)
-          (last-pos-x  0))
+    (let* ((start-x     (ncurses-view-x view))
+           (disp-width  (+ (ncurses-view-width view) start-x))
+           (disp-x      start-x)
+           (pos-x       start-x)
+           (last-disp-x start-x)
+           (last-pos-x  start-x)
+           (pos-y       (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0))))
       (loop :while (< disp-x disp-width)
-            :for c-code := (get-charcode-from-scrwin view pos-x y :modeline modeline)
+            :for c-code := (get-charcode-from-scrwin view pos-x pos-y)
             :for c := (code-char c-code)
             :do (setf disp-x (lem-base:char-width c disp-x))
                 (cond
@@ -280,107 +328,109 @@
                 (unless (or (char= c #\space) (char= c #\u200b))
                   (setf last-disp-x disp-x)
                   (setf last-pos-x  pos-x)))
-      ;(dbg-log-format "disp-w=~D disp-x=~D pos-x=~D last-d-x=~D last-p-x=~D"
-      ;                disp-width disp-x pos-x last-disp-x last-pos-x)
+      ;(dbg-log-format "disp-w=~D disp-x=~D pos-x=~D pos-y=~D last-d-x=~D last-p-x=~D"
+      ;                disp-width disp-x pos-x pos-y last-disp-x last-pos-x)
       (let ((str (concatenate 'string
                               (make-string (max (- disp-width last-disp-x) 0)
                                            :initial-element #\space)
                               (make-string (max (- disp-width pos-x) 0)
                                            :initial-element #\u200b))))
-        (charms/ll:mvwaddstr scrwin y last-pos-x str))))
+        (charms/ll:mvwaddstr (ncurses-view-scrwin view) pos-y last-pos-x str))))
 
-  ;; use get-pos-x and adjust-line
+  ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:print ((implementation ncurses) view x y string attribute)
     ;(dbg-log-format "lem-if:print")
     ;(dbg-log-format "x=~D y=~D view-x=~D view-y=~D view-w=~D view-h=~D"
     ;                x y (ncurses-view-x view) (ncurses-view-y view)
     ;                (ncurses-view-width view) (ncurses-view-height view))
-    ;(dbg-log-format "x=~D y=~D pos-x=~D string=~S" x y (get-pos-x view x y) string)
+    ;(dbg-log-format "x=~D y=~D pos-x=~D pos-y=~D string=~S"
+    ;                x y (get-pos-x view x y) (get-pos-y view x y) string)
     (let ((attr (attribute-to-bits attribute)))
       (charms/ll:wattron (ncurses-view-scrwin view) attr)
       ;(charms/ll:scrollok (ncurses-view-scrwin view) 0)
-      (charms/ll:mvwaddstr (ncurses-view-scrwin view) y (get-pos-x view x y) string)
+      (charms/ll:mvwaddstr (ncurses-view-scrwin view)
+                           (get-pos-y view x y)
+                           (get-pos-x view x y)
+                           string)
       ;(charms/ll:scrollok (ncurses-view-scrwin view) 1)
       (charms/ll:wattroff (ncurses-view-scrwin view) attr)
       (adjust-line view x y)))
 
-  ;; no change
+  ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:print-modeline ((implementation ncurses) view x y string attribute)
     ;(dbg-log-format "lem-if:print-modeline")
     (let ((attr (attribute-to-bits attribute)))
       (charms/ll:wattron (ncurses-view-modeline-scrwin view) attr)
-      (charms/ll:mvwaddstr (ncurses-view-modeline-scrwin view) y x string)
+      (charms/ll:mvwaddstr (ncurses-view-modeline-scrwin view)
+                           (get-pos-y view x y :modeline t)
+                           (get-pos-x view x y :modeline t)
+                           string)
+      (adjust-line view x y :modeline t)
       (charms/ll:wattroff (ncurses-view-modeline-scrwin view) attr)))
 
-  ;; use get-pos-x and adjust-line (incomplete)
-  ;(defmethod lem-if:print-modeline ((implementation ncurses) view x y string attribute)
-  ;  ;(dbg-log-format "lem-if:print-modeline")
-  ;  (let ((attr (attribute-to-bits attribute)))
-  ;    (charms/ll:wattron (ncurses-view-modeline-scrwin view) attr)
-  ;    (charms/ll:mvwaddstr (ncurses-view-modeline-scrwin view) y (get-pos-x view x y :modeline t) string)
-  ;    (adjust-line view x y :modeline t)
-  ;    (charms/ll:wattroff (ncurses-view-modeline-scrwin view) attr)))
-
-  ;; use get-pos-x and adjust-line
+  ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:clear-eol ((implementation ncurses) view x y)
     ;(dbg-log-format "lem-if:clear-eol")
     ;(dbg-log-format "x=~D y=~D view-x=~D view-y=~D view-w=~D view-h=~D"
     ;                x y (ncurses-view-x view) (ncurses-view-y view)
     ;                (ncurses-view-width view) (ncurses-view-height view))
-    ;; workaround for line continuetion character missing (incomplete)
-    (when (< x (ncurses-view-width view))
-      (charms/ll:wmove (ncurses-view-scrwin view) y (get-pos-x view x y))
-      (charms/ll:wclrtoeol (ncurses-view-scrwin view))
-      (adjust-line view x y)))
+    ;(charms/ll:wmove (ncurses-view-scrwin view) y x)
+    ;(charms/ll:wclrtoeol (ncurses-view-scrwin view)))
+    (charms/ll:mvwaddstr (ncurses-view-scrwin view)
+                         (get-pos-y view x y)
+                         (get-pos-x view x y)
+                         (make-string (max (- (ncurses-view-width view) x) 0)
+                                      :initial-element #\space))
+    (adjust-line view x y))
 
-  ;; use get-pos-x and adjust-line
+  ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:clear-eob ((implementation ncurses) view x y)
     ;(dbg-log-format "lem-if:clear-eob")
     ;(dbg-log-format "x=~D y=~D view-x=~D view-y=~D view-w=~D view-h=~D"
     ;                x y (ncurses-view-x view) (ncurses-view-y view)
     ;                (ncurses-view-width view) (ncurses-view-height view))
-    ;; workaround for line continuetion character missing (incomplete)
-    (cond
-     ((< x (ncurses-view-width view))
-      (charms/ll:wmove (ncurses-view-scrwin view) y (get-pos-x view x y))
-      (charms/ll:wclrtobot (ncurses-view-scrwin view))
-      (adjust-line view x y))
-     ((< y (- (ncurses-view-height view) 1))
-      (charms/ll:wmove (ncurses-view-scrwin view) (+ y 1) 0)
-      (charms/ll:wclrtobot (ncurses-view-scrwin view)))))
+    ;(charms/ll:wmove (ncurses-view-scrwin view) y x)
+    ;(charms/ll:wclrtobot (ncurses-view-scrwin view)))
+    (charms/ll:mvwaddstr (ncurses-view-scrwin view)
+                         (get-pos-y view x y)
+                         (get-pos-x view x y)
+                         (make-string (max (- (ncurses-view-width view) x) 0)
+                                      :initial-element #\space))
+    (adjust-line view x y)
+    (loop :for y1 :from (+ y 1) :below (ncurses-view-height view)
+          :with str := (make-string (ncurses-view-width view) :initial-element #\space)
+          :do (charms/ll:mvwaddstr (ncurses-view-scrwin view)
+                                   (get-pos-y view 0 y1)
+                                   (get-pos-x view 0 y1)
+                                   str)))
 
-  ;; check display height (to avoid SEGV)
+  ;; use only stdscr
   (defmethod lem-if:redraw-view-after ((implementation ncurses) view focus-window-p)
     ;(dbg-log-format "lem-if:redraw-view-after 1")
     (let ((attr (attribute-to-bits 'modeline)))
       (charms/ll:attron attr)
       (when (and (ncurses-view-modeline-scrwin view)
                  (< 0 (ncurses-view-x view)))
-        (charms/ll:move (ncurses-view-y view) (1- (ncurses-view-x view)))
-        (charms/ll:vline (char-code #\space) (1+ (ncurses-view-height view))))
-      (charms/ll:attroff attr)
-      (charms/ll:wnoutrefresh charms/ll:*stdscr*))
-    ;(dbg-log-format "lem-if:redraw-view-after 2")
-    ;; check display height (to avoid SEGV)
-    (when (and (ncurses-view-modeline-scrwin view)
-               (>= charms/ll:*lines* 2))
-      (charms/ll:wnoutrefresh (ncurses-view-modeline-scrwin view)))
-    ;(dbg-log-format "lem-if:redraw-view-after 3")
-    (charms/ll:wnoutrefresh (ncurses-view-scrwin view))
-    ;(dbg-log-format "lem-if:redraw-view-after 4")
-    ;; workaround for cursor position problem
-    (unless (minibuffer-window-active-p)
-      (charms/ll:move lem::*cursor-y* lem::*cursor-x*)))
+        (loop :for y1 :from 0 :below (+ (ncurses-view-height view) 1)
+              :do (charms/ll:mvwaddch (ncurses-view-scrwin view)
+                                      (+ (ncurses-view-y view) y1)
+                                      (- (ncurses-view-x view) 1)
+                                      (char-code #\space))))
+      (charms/ll:attroff attr))
+    (charms/ll:wnoutrefresh (ncurses-view-scrwin view)))
 
-  ;; no change
+  ;; adjust cursor position
   (defmethod lem-if:update-display ((implementation ncurses))
     ;(dbg-log-format "lem-if:update-display")
-    (let ((scrwin (ncurses-view-scrwin (window-view (current-window)))))
+    (let* ((view   (window-view (current-window)))
+           (scrwin (ncurses-view-scrwin view)))
       (if (lem::covered-with-floating-window-p (current-window) lem::*cursor-x* lem::*cursor-y*)
           (charms/ll:curs-set 0)
           (progn
             (charms/ll:curs-set 1)
-            (charms/ll:wmove scrwin lem::*cursor-y* lem::*cursor-x*)))
+            (charms/ll:wmove scrwin
+             (+ lem::*cursor-y* (ncurses-view-y view))
+             (+ lem::*cursor-x* (ncurses-view-x view)))))
       (charms/ll:wnoutrefresh scrwin)
       (charms/ll:doupdate)))
 
