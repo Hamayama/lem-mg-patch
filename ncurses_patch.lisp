@@ -310,13 +310,11 @@
 
   ;; adjust line width by using zero-width-space character (#\u200b)
   (defun adjust-line (view x y &key (modeline nil))
-    (let* ((start-x     (ncurses-view-x view))
-           (disp-width  (+ (ncurses-view-width view) start-x))
-           (disp-x      start-x)
-           (pos-x       start-x)
-           (last-disp-x start-x)
-           (last-pos-x  start-x)
-           (pos-y       (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0))))
+    (let* ((start-x    (ncurses-view-x view))
+           (disp-width (+ (ncurses-view-width view) start-x))
+           (disp-x     start-x)
+           (pos-x      start-x)
+           (pos-y      (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0))))
       (loop :while (< disp-x disp-width)
             :for c-code := (get-charcode-from-scrwin view pos-x pos-y)
             :for c := (code-char c-code)
@@ -325,18 +323,12 @@
                  ((gethash c lem-base:*char-replacement*)
                   (setf pos-x (lem-base:char-width c pos-x)))
                  (t
-                  (incf pos-x)))
-                (unless (or (char= c #\space) (char= c #\u200b))
-                  (setf last-disp-x disp-x)
-                  (setf last-pos-x  pos-x)))
-      ;(dbg-log-format "disp-w=~D disp-x=~D pos-x=~D pos-y=~D last-d-x=~D last-p-x=~D"
-      ;                disp-width disp-x pos-x pos-y last-disp-x last-pos-x)
-      (let ((str (concatenate 'string
-                              (make-string (max (- disp-width last-disp-x) 0)
-                                           :initial-element #\space)
-                              (make-string (max (- disp-width pos-x) 0)
-                                           :initial-element #\u200b))))
-        (charms/ll:mvwaddstr (ncurses-view-scrwin view) pos-y last-pos-x str))))
+                  (incf pos-x))))
+      ;(dbg-log-format "disp-w=~D disp-x=~D pos-x=~D pos-y=~D"
+      ;                disp-width disp-x pos-x pos-y)
+      (charms/ll:mvwaddstr (ncurses-view-scrwin view) pos-y pos-x
+                           (make-string (max (- disp-width pos-x) 0)
+                                        :initial-element #\u200b))))
 
   ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:print ((implementation ncurses) view x y string attribute)
@@ -366,8 +358,8 @@
                            (get-pos-y view x y :modeline t)
                            (get-pos-x view x y :modeline t)
                            string)
-      (adjust-line view x y :modeline t)
-      (charms/ll:wattroff (ncurses-view-modeline-scrwin view) attr)))
+      (charms/ll:wattroff (ncurses-view-modeline-scrwin view) attr)
+      (adjust-line view x y :modeline t)))
 
   ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:clear-eol ((implementation ncurses) view x y)

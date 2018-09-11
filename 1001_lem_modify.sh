@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 1001_lem_modify.sh
-# 2018-9-7 v1.05
+# 2018-9-11 v1.11
 
 set -e
 
@@ -66,6 +66,12 @@ function do_patch_to_ncurses_asd_file {
     if ! grep -q -e '(:file "cl-charms_patch")' $patch_file; then
         cp $patch_file $patch_file.$bak
         sed -e 's@\(:components (\)@\1(:file "cl-charms_patch")@' $patch_file.$bak > $patch_file
+    fi
+
+    # add '(:file "term_patch")'
+    if ! grep -q -e '(:file "term_patch")' $patch_file; then
+        cp $patch_file $patch_file.$bak
+        sed -e 's@\((:file "term")\)@\1(:file "term_patch")@' $patch_file.$bak > $patch_file
     fi
 
     # add '(:file "ncurses_patch")'
