@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 1001_lem_modify.sh
-# 2018-9-11 v1.11
+# 2018-9-12 v1.12
 
 set -e
 
@@ -10,10 +10,8 @@ LEMBASE_ASD_FILE=lem-base/lem-base.asd
 LEMBASE_ASD_BKUP=lem-base/lem-base_orig1001.asd
 LISPMODE_ASD_FILE=modes/lisp-mode/lem-lisp-mode.asd
 LISPMODE_ASD_BKUP=modes/lisp-mode/lem-lisp-mode_orig1001.asd
-NCURSES_ASD_FILE=lem-frontend-ncurses/lem-ncurses.asd
-NCURSES_ASD_BKUP=lem-frontend-ncurses/lem-ncurses_orig1001.asd
-NCURSES_LISP_FILE=lem-frontend-ncurses/ncurses.lisp
-NCURSES_LISP_BKUP=lem-frontend-ncurses/ncurses_orig1001.lisp
+NCURSES_ASD_FILE=frontends/ncurses/lem-ncurses.asd
+NCURSES_ASD_BKUP=frontends/ncurses/lem-ncurses_orig1001.asd
 
 ##### functions #####
 function usage {
@@ -83,19 +81,6 @@ function do_patch_to_ncurses_asd_file {
     rm -f $patch_file.$bak
 }
 
-function do_patch_to_ncurses_lisp_file {
-    local patch_file="$1"
-    local bak="bak5001"
-
-    # comment out '(defstruct ncurses-view ... )'
-    if grep -q -e '^(defstruct ncurses-view' $patch_file; then
-        cp $patch_file $patch_file.$bak
-        sed -e '/(defstruct ncurses-view/,/height)/ s@^\(.*\)$@;\1@g' $patch_file.$bak > $patch_file
-    fi
-
-    rm -f $patch_file.$bak
-}
-
 ##### main #####
 
 while [ "$#" -gt 0 ]; do
@@ -107,15 +92,12 @@ done
 do_check_file  $LEMBASE_ASD_FILE
 do_check_file  $LISPMODE_ASD_FILE
 do_check_file  $NCURSES_ASD_FILE
-do_check_file  $NCURSES_LISP_FILE
 do_backup_file $LEMBASE_ASD_FILE  $LEMBASE_ASD_BKUP
 do_backup_file $LISPMODE_ASD_FILE $LISPMODE_ASD_BKUP
 do_backup_file $NCURSES_ASD_FILE  $NCURSES_ASD_BKUP
-do_backup_file $NCURSES_LISP_FILE $NCURSES_LISP_BKUP
 do_patch_to_lembase_asd_file  $LEMBASE_ASD_FILE
 do_patch_to_lispmode_asd_file $LISPMODE_ASD_FILE
 do_patch_to_ncurses_asd_file  $NCURSES_ASD_FILE
-do_patch_to_ncurses_lisp_file $NCURSES_LISP_FILE
 
 echo "Files were modified successfully."
 

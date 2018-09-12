@@ -26,5 +26,10 @@
   ;; for extracting a character code
   (define-exported-constant A_CHARTEXT #x0000ffff)
 
+  ;; for mouse
+  (define-exported-constant BUTTON4_PRESSED #x00010000) ; wheel up
+  (define-exported-constant BUTTON5_PRESSED #x00200000) ; wheel down
+  (cffi:defcfun ("nc_getmouse" %getmouse) :int (event :pointer))
+
   )
 

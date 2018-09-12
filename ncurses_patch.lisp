@@ -19,6 +19,10 @@
   (defkeycode "[resize]" #x222)
   (defvar *resizing* nil)
 
+  ;; for mouse
+  (defkeycode "[mouse]" #x21b)
+  (defvar *dragging-window* ())
+
   ;; no change
   (defstruct ncurses-view
     scrwin
@@ -54,8 +58,104 @@
      :width width
      :height height))
 
+  ;; for mouse
+  (defun mouse-get-window-rect (window)
+    (values (lem:window-x window)
+            (lem:window-y window)
+            (lem:window-width window)
+            (lem:window-height window)))
+  (defun mouse-move-to-cursor (window x y)
+    (lem:move-point (lem:current-point) (lem::window-view-point window))
+    (lem:move-to-next-virtual-line (lem:current-point) y)
+    (lem:move-to-virtual-line-column (lem:current-point) x))
+  (defun mouse-event-proc (bstate x1 y1)
+    (lambda ()
+      ;(dbg-log-format "bstate=~X x1=~D y1=~D" bstate x1 y1)
+      (cond
+       ;; button1 down
+       ((logtest bstate (logior charms/ll:BUTTON1_PRESSED
+                                charms/ll:BUTTON1_CLICKED
+                                charms/ll:BUTTON1_DOUBLE_CLICKED
+                                charms/ll:BUTTON1_TRIPLE_CLICKED))
+        (let ((press (logtest bstate charms/ll:BUTTON1_PRESSED)))
+          (find-if
+           (lambda(o)
+             (multiple-value-bind (x y w h) (mouse-get-window-rect o)
+               ;(dbg-log-format "x=~D y=~D w=~D h=~D x1=~D y1=~D" x y w h x1 y1)
+               (cond
+                ;; vertical dragging window
+                ((and press (= y1 (- y 1)) (<= x x1 (+ x w -1)))
+                 (setf *dragging-window* (list o 'y))
+                 t)
+                ;; horizontal dragging window
+                ((and press (= x1 (- x 1)) (<= y y1 (+ y h -2)))
+                 (setf *dragging-window* (list o 'x))
+                 t)
+                ;; move cursor
+                ((and (<= x x1 (+ x w -1)) (<= y y1 (+ y h -2)))
+                 (lem:send-event
+                  (lambda ()
+                    (setf (lem:current-window) o)
+                    (mouse-move-to-cursor o (- x1 x) (- y1 y))
+                    (lem:redraw-display)))
+                 t)
+                (t nil))))
+           (lem:window-list))))
+       ;; button1 up
+       ((logtest bstate charms/ll:BUTTON1_RELEASED)
+        (let ((o (first *dragging-window*)))
+          (when (windowp o)
+            (multiple-value-bind (x y w h) (mouse-get-window-rect o)
+              (setf (lem:current-window) o)
+              (cond
+               ;; vertical dragging window
+               ((eq (second *dragging-window*) 'x)
+                (let ((vx (- (- (lem:window-x o) 1) x1)))
+                  ;; this check is incomplete for 3 or more divisions
+                  (when (and (>= x1       5)
+                             (>= (+ w vx) 5))
+                    (lem:grow-window-horizontally vx)
+                    ;; workaround for display update problem (incomplete)
+                    (force-refresh-display charms/ll:*cols* (- charms/ll:*lines* 1))
+                    (lem:redraw-display))))
+               ;; horizontal dragging window
+               (t
+                (let ((vy (- (- (lem:window-y o) 1) y1)))
+                  ;; this check is incomplete for 3 or more divisions
+                  (when (and (>= y1       3)
+                             (>= (+ h vy) 3))
+                    (lem:grow-window vy)
+                    (lem:redraw-display))))
+               )))
+          (when o
+            (setf *dragging-window*
+                  (list nil (list x1 y1) *dragging-window*)))))
+       ;; wheel up
+       ((logtest bstate charms/ll:BUTTON4_PRESSED)
+        (lem:scroll-up 3)
+        (lem:redraw-display))
+       ;; wheel down
+       ((logtest bstate charms/ll:BUTTON5_PRESSED)
+        (lem:scroll-down 3)
+        (lem:redraw-display))
+       )))
+
+  ;; dealing with utf-16 surrogate pair characters
+  (defun get-key (code)
+    (let ((char #\null))
+      (cond
+       ((<= #xd800 code #xdbff)
+        (let* ((c-trail (charms/ll:getch))
+               (c-code  (+ #x10000 (* (- code #xd800) #x0400) (- c-trail #xdc00))))
+          ;(dbg-log-format "code=~X c-trail=~X c-code=~X" code c-trail c-code)
+          (setf char (code-char c-code))))
+       (t
+        (setf char (code-char code))))
+      (char-to-key char)))
+
   ;; enable modifier keys
   (let ((resize-code (get-code "[resize]"))
+        (mouse-code (get-code "[mouse]"))
         (abort-code (get-code "C-]"))
         (escape-code (get-code "escape"))
         (ctrl-key nil)
@@ -68,7 +168,7 @@
             (modifier-keys (charms/ll:PDC-get-key-modifiers)))
         (setf ctrl-key (logtest modifier-keys charms/ll:PDC_KEY_MODIFIER_CONTROL))
         (setf alt-key  (logtest modifier-keys charms/ll:PDC_KEY_MODIFIER_ALT))
-        ;(dbg-log-format "1 code=~D ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
+        ;(dbg-log-format "1 code=~X ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
         (cond
          ;; ctrl key workaround
          (ctrl-key
@@ -98,6 +198,19 @@
            ((= code #x1ea) (setf code #o403))
            ((= code #x1ed) (setf code #o404))
            ((= code #x1ec) (setf code #o405))
+           ;; M-[
+           ((= code #x1f1)
+            (charms/ll:timeout 100)
+            (let ((code1 (charms/ll:getch)))
+              (cond
+               ;; drop mouse escape sequence
+               ((= code1 #x03c) ; <
+                (loop :for code2 := (charms/ll:getch)
+                      :until (or (= code2 -1)
+                                 (= code2 #x04d)   ; M
+                                 (= code2 #x06d))) ; m
+                (setf code -1)))
+              (charms/ll:timeout -1)))
            ))
          ;; normal key workaround
          (t
@@ -108,7 +221,7 @@
            ;((= code #x153) (setf code #o523))
            ;((= code #x152) (setf code #o522))
            )))
-        ;(dbg-log-format "2 code=~D ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
+        ;(dbg-log-format "2 code=~X ctrl-key=~S alt-key=~S" code ctrl-key alt-key)
         code))
     (defun get-event ()
       (tagbody :start
@@ -122,29 +235,38 @@
                    ;(charms/ll:erase)
                    (setf *resizing* t)
                    :resize)
+                  ((= code mouse-code)
+                   ;; for mouse
+                   (multiple-value-bind (bstate x y z id)
+                       (charms/ll:getmouse)
+                     ;(dbg-log-format "bstate=~X x=~D y=~D z=~D id=~D"
+                     ;                bstate x y z id)
+                     (mouse-event-proc bstate x y)))
                   ((= code abort-code)
                    (setf esc-key nil)
                    :abort)
                   ((= code escape-code)
-                   (setf esc-key nil)
-                   (charms/ll:timeout 100)
-                   (let ((code (prog1 (get-ch)
-                                 (charms/ll:timeout -1))))
-                     (cond ((= code -1)
-                            (setf esc-key t)
-                            (get-key-from-name "escape"))
-                           ((= code #.(char-code #\[))
-                            (if (= (prog1 (get-ch)
-                                     (charms/ll:timeout -1))
-                                   #.(char-code #\<))
-                                ;;sgr(1006)
-                                (uiop:symbol-call :lem-mouse-sgr1006 :parse-mouse-event)
-                                (get-key-from-name "escape"))) ;; [tbd] unknown escape sequence
-                           (t
-                            (let ((key (get-key code)))
-                              (make-key :meta t
-                                        :sym (key-sym key)
-                                        :ctrl (key-ctrl key)))))))
+                   ;(setf esc-key nil)
+                   ;(charms/ll:timeout 100)
+                   ;(let ((code (prog1 (get-ch)
+                   ;              (charms/ll:timeout -1))))
+                   ;  (cond ((= code -1)
+                   ;         (setf esc-key t)
+                   ;         (get-key-from-name "escape"))
+                   ;        ((= code #.(char-code #\[))
+                   ;         (if (= (prog1 (get-ch)
+                   ;                  (charms/ll:timeout -1))
+                   ;                #.(char-code #\<))
+                   ;             ;;sgr(1006)
+                   ;             (uiop:symbol-call :lem-mouse-sgr1006 :parse-mouse-event)
+                   ;             (get-key-from-name "escape"))) ;; [tbd] unknown escape sequence
+                   ;        (t
+                   ;         (let ((key (get-key code)))
+                   ;           (make-key :meta t
+                   ;                     :sym (key-sym key)
+                   ;                     :ctrl (key-ctrl key)))))))
+                   (setf esc-key t)
+                   (get-key-from-name "escape"))
                   ((or alt-key esc-key)
                    (setf esc-key nil)
                    (let ((key (get-key code)))
@@ -168,7 +290,7 @@
                       (send-event event)))
                 ;; workaround for exit problem
                 ;; workaround for display update problem (incomplete)
-                (sleep 0.005))
+                (sleep 0.0001))
             #+sbcl
             (sb-sys:interactive-interrupt (c)
               (declare (ignore c))
@@ -199,6 +321,15 @@
                  (exit-editor-value result))
         (format t "~&~A~%" (exit-editor-value result)))))
 
+  ;; workaround for display update problem (incomplete)
+  (defun force-refresh-display (width height)
+    (loop :for y1 :from 0 :below height
+          :with str := (make-string width :initial-element #\.)
+          :do ;(dbg-log-format "y1=~D" y1)
+              (charms/ll:mvwaddstr charms/ll:*stdscr* y1 0 str))
+    (charms/ll:refresh)
+    (sleep 0.1))
+
   ;; for resizing display
   (defun resize-display ()
     (when *resizing*
@@ -206,12 +337,7 @@
       (charms/ll:resizeterm 0 0)
       (charms/ll:erase)
       ;; workaround for display update problem (incomplete)
-      (loop :for y1 :from 0 :below charms/ll:*lines*
-            :with str := (make-string charms/ll:*cols* :initial-element #\.)
-            :do ;(dbg-log-format "y1=~D" y1)
-                (charms/ll:mvwaddstr charms/ll:*stdscr* y1 0 str))
-      (charms/ll:refresh)
-      (sleep 0.1)))
+      (force-refresh-display charms/ll:*cols* charms/ll:*lines*)))
 
   ;; for resizing display
   (defmethod lem-if:display-width ((implementation ncurses))
@@ -239,7 +365,8 @@
     ;(charms/ll:clearok (ncurses-view-scrwin view) 1)
     ;(when (ncurses-view-modeline-scrwin view)
     ;  (charms/ll:clearok (ncurses-view-modeline-scrwin view) 1)))
-    (loop :for y1 :from 0 :below (ncurses-view-height view)
+    (loop :for y1 :from 0 :below (+ (ncurses-view-height view)
+                                    (if (ncurses-view-modeline-scrwin view) 1 0))
           :with str := (make-string (ncurses-view-width view) :initial-element #\space)
           :do (charms/ll:mvwaddstr (ncurses-view-scrwin view)
                                    (get-pos-y view 0 y1)
@@ -273,7 +400,7 @@
     ;                   x)))
     )
 
-  ;; for dealing with surrogate pair characters
+  ;; dealing with utf-16 surrogate pair characters
   (defun get-charcode-from-scrwin (view x y)
     (let ((c-lead (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y x)
                           charms/ll:A_CHARTEXT)))
@@ -286,12 +413,15 @@
         c-lead))))
 
   ;; get pos-x/y for printing wide characters
-  (defun get-pos-x (view x y &key (modeline nil))
+  (defun get-pos-x (view x y &key (modeline nil) (cursor nil))
+    (unless (or (= lem.term:*pos-adjust-mode* 1)
+                (and (= lem.term:*pos-adjust-mode* 2) (not cursor)))
+      (return-from get-pos-x (+ x (ncurses-view-x view))))
     (let* ((start-x (ncurses-view-x view))
            (disp-x0 (+ x start-x))
            (disp-x  start-x)
            (pos-x   start-x)
-           (pos-y   (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0))))
+           (pos-y   (get-pos-y view x y :modeline modeline)))
       (loop :while (< disp-x disp-x0)
             :for c-code := (get-charcode-from-scrwin view pos-x pos-y)
             :for c := (code-char c-code)
@@ -310,25 +440,50 @@
 
   ;; adjust line width by using zero-width-space character (#\u200b)
   (defun adjust-line (view x y &key (modeline nil))
+    (unless (or (= lem.term:*pos-adjust-mode* 1)
+                (= lem.term:*pos-adjust-mode* 2))
+      (return-from adjust-line))
     (let* ((start-x    (ncurses-view-x view))
-           (disp-width (+ (ncurses-view-width view) start-x))
-           (disp-x     start-x)
-           (pos-x      start-x)
-           (pos-y      (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0))))
-      (loop :while (< disp-x disp-width)
-            :for c-code := (get-charcode-from-scrwin view pos-x pos-y)
-            :for c := (code-char c-code)
-            :do (setf disp-x (lem-base:char-width c disp-x))
-                (cond
-                 ((gethash c lem-base:*char-replacement*)
-                  (setf pos-x (lem-base:char-width c pos-x)))
+           (disp-width (ncurses-view-width view))
+           (disp-x0    (+ disp-width start-x))
+           (pos-x      (get-pos-x view disp-width y :modeline modeline))
+           (pos-y      (get-pos-y view disp-width y :modeline modeline)))
+      ;(dbg-log-format "disp-w=~D disp-x0=~D pos-x=~D pos-y=~D"
+      ;                disp-width disp-x0 pos-x pos-y)
+      (when (> disp-x0 pos-x)
+        (charms/ll:mvwaddstr (ncurses-view-scrwin view) pos-y pos-x
+                             (make-string (- disp-x0 pos-x)
+                                          :initial-element #\u200b)))))
+
+  ;; workaround for display problem of utf-16
+  ;; surrogate pair characters (incomplete)
+  (defun remake-string (string)
+    (let ((clist    '())
+          (splitted nil))
+      (loop :for c :across string
+            :for c-code := (char-code c)
+            :do (cond 
+                 ((>= c-code #x10000)
+                  (multiple-value-bind (q r) (floor (- c-code #x10000) #x0400)
+                    (push (code-char (+ q #xd800)) clist)
+                    (push (code-char (+ r #xdc00)) clist)
+                    (setf splitted t)))
                  (t
-                  (incf pos-x))))
-      ;(dbg-log-format "disp-w=~D disp-x=~D pos-x=~D pos-y=~D"
-      ;                disp-width disp-x pos-x pos-y)
-      (charms/ll:mvwaddstr (ncurses-view-scrwin view) pos-y pos-x
-                           (make-string (max (- disp-width pos-x) 0)
-                                        :initial-element #\u200b))))
+                  (push c clist))))
+      ;(dbg-log-format "clist=~S" (reverse clist))
+      (if splitted (concatenate 'string (reverse clist)) string)))
+
+  ;; clip string to fit inside of view
+  (defun clip-string (view x y string)
+    (let ((disp-width (ncurses-view-width view))
+          (str-len    (length string)))
+      (cond
+       ((>= x disp-width)
+        "")
+       ((> (+ x str-len) disp-width)
+        (subseq string 0 (- disp-width x)))
+       (t
+        string))))
 
   ;; use get-pos-x/y and adjust-line
   (defmethod lem-if:print ((implementation ncurses) view x y string attribute)
@@ -344,7 +499,7 @@
       (charms/ll:mvwaddstr (ncurses-view-scrwin view)
                            (get-pos-y view x y)
                            (get-pos-x view x y)
-                           string)
+                           (clip-string view x y (remake-string string)))
       ;(charms/ll:scrollok (ncurses-view-scrwin view) 1)
       (charms/ll:wattroff (ncurses-view-scrwin view) attr)
       (adjust-line view x y)))
@@ -357,7 +512,7 @@
       (charms/ll:mvwaddstr (ncurses-view-modeline-scrwin view)
                            (get-pos-y view x y :modeline t)
                            (get-pos-x view x y :modeline t)
-                           string)
+                           (clip-string view x y (remake-string string)))
       (charms/ll:wattroff (ncurses-view-modeline-scrwin view) attr)
       (adjust-line view x y :modeline t)))
 
@@ -384,12 +539,7 @@
     ;                (ncurses-view-width view) (ncurses-view-height view))
     ;(charms/ll:wmove (ncurses-view-scrwin view) y x)
     ;(charms/ll:wclrtobot (ncurses-view-scrwin view)))
-    (charms/ll:mvwaddstr (ncurses-view-scrwin view)
-                         (get-pos-y view x y)
-                         (get-pos-x view x y)
-                         (make-string (max (- (ncurses-view-width view) x) 0)
-                                      :initial-element #\space))
-    (adjust-line view x y)
+    (lem-if:clear-eol implementation view x y)
     (loop :for y1 :from (+ y 1) :below (ncurses-view-height view)
           :with str := (make-string (ncurses-view-width view) :initial-element #\space)
           :do (charms/ll:mvwaddstr (ncurses-view-scrwin view)
@@ -399,7 +549,7 @@
 
   ;; use only stdscr
   (defmethod lem-if:redraw-view-after ((implementation ncurses) view focus-window-p)
-    ;(dbg-log-format "lem-if:redraw-view-after 1")
+    ;(dbg-log-format "lem-if:redraw-view-after")
     (let ((attr (attribute-to-bits 'modeline)))
       (charms/ll:attron attr)
       (when (and (ncurses-view-modeline-scrwin view)
@@ -422,8 +572,8 @@
           (progn
             (charms/ll:curs-set 1)
             (charms/ll:wmove scrwin
-                             (+ lem::*cursor-y* (ncurses-view-y view))
-                             (+ lem::*cursor-x* (ncurses-view-x view)))))
+                             (get-pos-y view lem::*cursor-x* lem::*cursor-y*)
+                             (get-pos-x view lem::*cursor-x* lem::*cursor-y* :cursor t))))
       (charms/ll:wnoutrefresh scrwin)
       (charms/ll:doupdate)))
 

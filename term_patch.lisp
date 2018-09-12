@@ -5,6 +5,36 @@
 #+win32
 (progn
 
+  (export '(*pos-adjust-mode* get-mouse-mode enable-mouse disable-mouse))
+
+  ;; position adjustment mode
+  ;;   =0: no conversion
+  ;;   =1: wide character adjustment
+  ;;       (for ConEmu utf-8 mode (chcp 65001))
+  ;;   =2: wide character adjustment except cursor
+  ;;       (for mintty)
+  (defvar *pos-adjust-mode*
+    (cond 
+     #+sbcl
+     ((sb-unix::posix-getenv "ConEmuBuild") 1)
+     (t 2)))
+
+  ;; mouse mode
+  ;;   =0: not use mouse
+  ;;   =1: use mouse
+  (defvar *mouse-mode* 1)
+
+  ;; for mouse
+  (defun get-mouse-mode ()
+    *mouse-mode*)
+  (defun enable-mouse ()
+    (setf *mouse-mode* 1)
+    (charms/ll:mousemask (logior charms/ll:all_mouse_events
+                                 charms/ll:report_mouse_position)))
+  (defun disable-mouse ()
+    (setf *mouse-mode* 0)
+    (charms/ll:mousemask 0))
+
   ;; enable default color code (-1)
   (defun term-init ()
     #+(or (and ccl unix) (and lispworks unix))
@@ -31,6 +61,11 @@
     (charms/ll:keypad charms/ll:*stdscr* 1)
     (setf charms/ll::*escdelay* 0)
     ;(charms/ll:curs-set 0)
+
+    ;; for mouse
+    (when (= *mouse-mode* 1)
+      (enable-mouse))
+
     t)
 
   )
