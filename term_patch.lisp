@@ -10,7 +10,7 @@
   ;; position adjustment mode
   ;;   =0: no conversion
   ;;   =1: wide character adjustment
-  ;;       (for ConEmu utf-8 mode (chcp 65001))
+  ;;       (for ConEmu utf-8 mode (chcp 65001) (incomplete (unstable))
   ;;   =2: wide character adjustment except cursor
   ;;       (for mintty)
   (defvar *pos-adjust-mode*
@@ -35,7 +35,7 @@
     (setf *mouse-mode* 0)
     (charms/ll:mousemask 0))
 
-  ;; enable default color code (-1)
+  ;; workaround for windows pdcurses
   (defun term-init ()
     #+(or (and ccl unix) (and lispworks unix))
     (lem-setlocale/cffi:setlocale lem-setlocale/cffi:+lc-all+ "")

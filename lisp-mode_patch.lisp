@@ -5,7 +5,7 @@
 #+win32
 (progn
 
-  ;; quit slime to exit lem normally
+  ;; quit slime to exit lem normally (incomplete)
   (add-hook *exit-editor-hook*
             (lambda ()
               (ignore-errors
