@@ -21,7 +21,7 @@
 
   ;; for mouse
   (defkeycode "[mouse]" #x21b)
-  (defvar *dragging-window* ())
+  (defvar *dragging-window* '())
 
   ;; use only stdscr
   (defmethod lem-if:make-view
@@ -67,11 +67,9 @@
                  t)
                 ;; move cursor
                 ((and (<= x x1 (+ x w -1)) (<= y y1 (+ y h -2)))
-                 (lem:send-event
-                  (lambda ()
-                    (setf (lem:current-window) o)
-                    (mouse-move-to-cursor o (- x1 x) (- y1 y))
-                    (lem:redraw-display)))
+                 (setf (lem:current-window) o)
+                 (mouse-move-to-cursor o (- x1 x) (- y1 y))
+                 (lem:redraw-display)
                  t)
                 (t nil))))
            (lem:window-list))))
@@ -116,15 +114,14 @@
 
   ;; deal with utf-16 surrogate pair characters
   (defun get-key (code)
-    (let ((char #\null))
-      (cond
-       ((<= #xd800 code #xdbff)
-        (let* ((c-trail (charms/ll:getch))
-               (c-code  (+ #x10000 (* (- code #xd800) #x0400) (- c-trail #xdc00))))
-          (setf char (code-char c-code))))
-       (t
-        (setf char (code-char code))))
-      (char-to-key char)))
+    (when (<= #xd800 code #xdbff)
+      (charms/ll:timeout 100)
+      (let ((c-lead  code)
+            (c-trail (charms/ll:getch)))
+        (when (<= #xdc00 c-trail #xdfff)
+          (setf code (+ #x10000 (* (- c-lead #xd800) #x0400) (- c-trail #xdc00))))
+        (charms/ll:timeout -1)))
+    (char-to-key (code-char code)))
 
   ;; enable modifier keys
   (let ((resize-code (get-code "[resize]"))
@@ -323,15 +320,15 @@
 
   ;; deal with utf-16 surrogate pair characters
   (defun get-charcode-from-scrwin (view x y)
-    (let ((c-lead (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y x)
-                          charms/ll:A_CHARTEXT)))
-      (cond
-       ((and (<= #xd800 c-lead #xdbff) (< x (- (ncurses-view-width view) 1)))
-        (let ((c-trail (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y (+ x 1))
+    (let ((code (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y x)
+                        charms/ll:A_CHARTEXT)))
+      (when (and (<= #xd800 code #xdbff) (< x (- (ncurses-view-width view) 1)))
+        (let ((c-lead  code)
+              (c-trail (logand (charms/ll:mvwinch (ncurses-view-scrwin view) y (+ x 1))
                                charms/ll:A_CHARTEXT)))
-          (+ #x10000 (* (- c-lead #xd800) #x0400) (- c-trail #xdc00))))
-       (t
-        c-lead))))
+          (when (<= #xdc00 c-trail #xdfff)
+            (setf code (+ #x10000 (* (- c-lead #xd800) #x0400) (- c-trail #xdc00))))))
+      code))
 
   ;; get pos-x/y for printing wide characters
   (defun get-pos-x (view x y &key (modeline nil) (cursor nil))
@@ -351,6 +348,7 @@
                  ((gethash c lem-base:*char-replacement*)
                   (setf pos-x (lem-base:char-width c pos-x)))
                  (t
+                  ;; pos-x is incremented only 1 at wide characters
                   (incf pos-x))))
       pos-x))
   (defun get-pos-y (view x y &key (modeline nil))
@@ -379,9 +377,10 @@
             :for c-code := (char-code c)
             :do (cond 
                  ((>= c-code #x10000)
+                  ;; split to 2 characters
                   (multiple-value-bind (q r) (floor (- c-code #x10000) #x0400)
-                    (push (code-char (+ q #xd800)) clist)
-                    (push (code-char (+ r #xdc00)) clist)
+                    (push (code-char (+ q #xd800)) clist) ; leading surrogate
+                    (push (code-char (+ r #xdc00)) clist) ; trailing surrogate
                     (setf splitted t)))
                  (t
                   (push c clist))))
@@ -391,12 +390,11 @@
 
   ;; clip string to fit inside of view
   (defun clip-string (view x y string)
-    (let ((disp-width (ncurses-view-width view))
-          (str-len    (length string)))
+    (let ((disp-width (ncurses-view-width view)))
       (cond
        ((>= x disp-width)
         "")
-       ((> (+ x str-len) disp-width)
+       ((> (+ x (length string)) disp-width)
         (subseq string 0 (- disp-width x)))
        (t
         string))))
